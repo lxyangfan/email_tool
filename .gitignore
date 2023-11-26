@@ -1,0 +1,8 @@
+venv
+body.fld/
+build
+dist/
+*.log
+*.csv
+conf/
+.DS_Store
