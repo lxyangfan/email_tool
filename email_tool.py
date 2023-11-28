@@ -2,6 +2,8 @@ import csv
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from email.message import EmailMessage
+
 import ssl
 from logger import get_logger
 from config import config
@@ -49,16 +51,17 @@ class EmailSender:
 
 
         # 创建邮件对象
-        msg = MIMEMultipart()
-        msg['From'] = f'{sender_alias} <{sender_email}>'
+        msg = EmailMessage()
+        msg.add_header('From', f'{sender_alias} <{sender_email}>')
         msg['To'] = to
         msg['Subject'] = subject
 
         # 添加邮件正文
-        msg.attach(MIMEText(body, 'html'))
+        msg.set_content(body, subtype='html', charset='utf-8')
+
 
         try:
-            self.server.sendmail(sender_email, to, msg.as_string())
+            self.server.send_message(msg)
         except Exception as e:
             logger.error(f'Error: {str(e)}')
             raise e
@@ -102,7 +105,6 @@ def main():
                 write_error([{'recipient': recipient, 'time': now, 'status':'Success', 'error': None}], log_file)
 
                 logger.info(f'Send to {recipient} Success')
-                time.sleep(10) # 模拟发送邮件的间隔
             except Exception as e:
                 logger.error(f'Send to {recipient} Fails.', e)
                 # 记录发送失败的邮件
@@ -147,3 +149,5 @@ def write_success(success_list, log_file):
 
 if __name__ == '__main__':
     main()
+    # 接收控制台输入，防止程序退出
+    input('Press Enter to exit...')
