@@ -11,6 +11,7 @@ import datetime
 import time
 import os
 import concurrent.futures
+import queue
 
 logger = get_logger()
 config_path = os.path.join(os.path.dirname(__file__), 'conf', 'task.yaml')
@@ -68,13 +69,13 @@ class EmailSender:
             
 
 
-def worker(email_sender, recipient, subject, body, log_file):
+def do_send(email_sender, recipient, subject, body, log_file):
+    now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     try:
         logger.info(f'Sending to {recipient}')
 
         email_sender.send_email(recipient, subject, body)
         
-        now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         write_error([{'recipient': recipient, 'time': now, 'status':'Success', 'error': None}], log_file)
         logger.info(f'Send to {recipient} Success')
     except Exception as e:
@@ -82,6 +83,14 @@ def worker(email_sender, recipient, subject, body, log_file):
         # 记录发送失败的邮件
         write_error([{'recipient': recipient, 'time': now, 'status':'Fail','error': str(e)}], log_file)
 
+def worker(task_queue, sender, subject, email_body, log_file):
+    while True and not task_queue.empty():
+        logger.info('begin to work')
+        item = task_queue.get() # wait for job
+        logger.info(f'get work: {item}')
+        do_send(sender, item, subject, email_body, log_file )
+        task_queue.task_done()
+        logger.info(f'task done')
 
 
 def main():
@@ -106,13 +115,19 @@ def main():
         sent_list = [row['recipient'] for row in reader if row['status'] == 'Success']
     
     recipients = [recipient for recipient in recipients if recipient not in sent_list]
-    with open(html_file, 'r', encoding='utf-16') as file:
+    with open(html_file, 'r', encoding='utf-8') as file:
         email_body = file.read()
         
     # 逐个发送邮件
+    total_queue = queue.Queue()
     for recipient in recipients:
-        worker(senders[0], recipient, subject, email_body, log_file)
+        total_queue.put(recipient)
+    
+    with concurrent.futures.ThreadPoolExecutor(thread_name_prefix="sender") as pool:
+        for sender in senders:
+            pool.submit(worker, total_queue, sender, subject, email_body, log_file)
 
+    total_queue.join()
     for sender in senders:
         sender.destroy_smtp()
     logger.info('Email sending completed')
