@@ -1,10 +1,13 @@
 #encoding=utf-8
 import yaml
 from logger import get_logger
+import os
 
 logger = get_logger()
 
-yaml_config = 'conf/task.yaml'
+# 获取当前目录
+curr_dir = os.path.dirname(__file__)
+yaml_config = os.path.join(curr_dir, "conf", "task.yaml")
 
 class YamlConfig:
     def __init__(self, yaml_file):
@@ -14,7 +17,7 @@ class YamlConfig:
         
     def load_config(self):
         logger.info(f'Loading config from {self.yaml_file}')
-        with open(self.yaml_file, 'r') as f:
+        with open(self.yaml_file, 'r', encoding="utf-8") as f:
             self.config = yaml.safe_load(f)
         logger.info(f'Config loaded success: {yaml_config}')
         
@@ -35,10 +38,11 @@ class YamlConfig:
         else:
             return [conf]    
 
-config = YamlConfig(yaml_config)
+
 
 
 if __name__ == '__main__':
     logger.info('Testing config.py')
+    config = YamlConfig(yaml_config)
     logger.info(config.get_or_default('recipient', 'address_book'))
     logger.info(config.get_list('smtp','credential'))

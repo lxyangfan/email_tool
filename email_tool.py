@@ -6,11 +6,14 @@ from email.message import EmailMessage
 
 import ssl
 from logger import get_logger
-from config import config
+from config import YamlConfig
 import datetime
 import time
+import os
 
 logger = get_logger()
+config_path = os.path.join(os.path.dirname(__file__), 'conf', 'task.yaml')
+config = YamlConfig(config_path)
 
 class EmailSender:
     
@@ -92,7 +95,6 @@ def main():
     with open(html_file, 'r', encoding='utf-16') as file:
         email_body = file.read()
         
-    success_list = []
     try:
         # 逐个发送邮件
         for recipient in recipients:

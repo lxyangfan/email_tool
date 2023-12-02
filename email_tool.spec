@@ -3,8 +3,10 @@
 
 a = Analysis(
     ['email_tool.py'],
-    pathex=['/Users/frank/project/py/email_tool'],
-    binaries=[],
+    pathex=['D:\\projects\\frank\\py\\email_tool'],
+    binaries=[(
+        'conf/*', 'conf'
+    )],
     datas=[],
     hiddenimports=[],
     hookspath=[],
