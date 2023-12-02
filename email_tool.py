@@ -10,6 +10,7 @@ from config import YamlConfig
 import datetime
 import time
 import os
+import concurrent.futures
 
 logger = get_logger()
 config_path = os.path.join(os.path.dirname(__file__), 'conf', 'task.yaml')
@@ -17,11 +18,13 @@ config = YamlConfig(config_path)
 
 class EmailSender:
     
-    def __init__(self, host, port, credential):
+    def __init__(self, host, port, user, password, alias):
         self.host= host
         self.port= port
-        self.credential = credential
-        logger.info(f'Initializing SMTP server {self.host}:{self.port} {self.credential["user"]}')
+        self.user = user
+        self.password = password
+        self.alias = alias
+        logger.info(f'Initializing SMTP server {self.host}:{self.port} {self.user}')
         self.init_smtp()
         
         
@@ -29,14 +32,8 @@ class EmailSender:
         context = ssl.create_default_context()
         context.set_ciphers('DEFAULT')
         
-        sender_alias = self.credential['alias']
-        sender_email = self.credential['user']
-        sender_password = self.credential['password']
-        smtp_server = self.host
-        smtp_port = self.port  # 一般为587端口
-        
         self.server = smtplib.SMTP_SSL(self.host, self.port, context=context)
-        self.server.login(sender_email, sender_password)
+        self.server.login(self.user, self.password)
         
         
     def destroy_smtp(self):
@@ -49,8 +46,8 @@ class EmailSender:
     def send_email(self, to, subject, body):
         # 设置发件人和SMTP服务器信息
        
-        sender_alias = self.credential['alias']
-        sender_email = self.credential['user']
+        sender_alias = self.alias
+        sender_email = self.user
 
 
         # 创建邮件对象
@@ -70,6 +67,23 @@ class EmailSender:
             raise e
             
 
+
+def worker(email_sender, recipient, subject, body, log_file):
+    try:
+        logger.info(f'Sending to {recipient}')
+
+        email_sender.send_email(recipient, subject, body)
+        
+        now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        write_error([{'recipient': recipient, 'time': now, 'status':'Success', 'error': None}], log_file)
+        logger.info(f'Send to {recipient} Success')
+    except Exception as e:
+        logger.error(f'Send to {recipient} Fails.', e)
+        # 记录发送失败的邮件
+        write_error([{'recipient': recipient, 'time': now, 'status':'Fail','error': str(e)}], log_file)
+
+
+
 def main():
     csv_file = config.get_or_default('recipient','address_book', default_value='conf/recepients.csv') 
     html_file = config.get_or_default('email','body_file', default_value='conf/email_body.html')
@@ -77,11 +91,11 @@ def main():
     
     subject = config.get_or_default('email','subject', default_value='Test Email')
     
-    host = config.get_or_default('smtp','host')
-    port = config.get_or_default('smtp','port')
-    credential = config.get_or_default('smtp','credential',0)
+    smtp_list = config.get_list('smtp')
 
-    sender = EmailSender(host, port, credential)
+    senders = [EmailSender(smtp.get('host'), smtp.get('port'), 
+                           smtp.get('user'), smtp.get('password'), 
+                           smtp.get('alias')) for smtp in smtp_list]
 
     # 读取CSV文件
     with open(csv_file, 'r') as file:
@@ -95,25 +109,11 @@ def main():
     with open(html_file, 'r', encoding='utf-16') as file:
         email_body = file.read()
         
-    try:
-        # 逐个发送邮件
-        for recipient in recipients:
-            try:
-                logger.info(f'Sending to {recipient}')
+    # 逐个发送邮件
+    for recipient in recipients:
+        worker(senders[0], recipient, subject, email_body, log_file)
 
-                sender.send_email(recipient, subject, email_body)
-                
-                now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                write_error([{'recipient': recipient, 'time': now, 'status':'Success', 'error': None}], log_file)
-
-                logger.info(f'Send to {recipient} Success')
-            except Exception as e:
-                logger.error(f'Send to {recipient} Fails.', e)
-                # 记录发送失败的邮件
-                write_error([{'recipient': recipient, 'time': now, 'status':'Fail','error': str(e)}], log_file)
-    except Exception as e:
-        logger.error(f"error happens, {str(e)}")
-    finally:
+    for sender in senders:
         sender.destroy_smtp()
     logger.info('Email sending completed')
 
