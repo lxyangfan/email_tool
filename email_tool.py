@@ -44,7 +44,7 @@ class EmailSender:
             logger.info('SMTP server destroyed')
         
 
-    def send_email(self, to, subject, body):
+    def send_email(self, to, subject, body, receiver_name=None, subject_raw=None):
         # 设置发件人和SMTP服务器信息
        
         sender_alias = self.alias
@@ -55,7 +55,10 @@ class EmailSender:
         msg = EmailMessage()
         msg.add_header('From', f'{sender_alias} <{sender_email}>')
         msg['To'] = to
-        msg['Subject'] = subject
+        if receiver_name is not None and '{name}' in subject:
+            msg['Subject'] = subject.replace('{name}', receiver_name)
+        else:
+            msg['Subject'] = subject_raw
 
         # 添加邮件正文
         msg.set_content(body, subtype='html', charset='utf-8')
@@ -69,26 +72,26 @@ class EmailSender:
             
 
 
-def do_send(email_sender, recipient, subject, body, log_file):
+def do_send(email_sender, recipient, subject, body, log_file, subject_raw=None):
     now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     try:
         logger.info(f'Sending to {recipient}')
-
-        email_sender.send_email(recipient, subject, body)
+        receiver_email, receiver_name = recipient
+        email_sender.send_email(receiver_email, subject, body, receiver_name, subject_raw)
         
-        write_error([{'recipient': recipient, 'time': now, 'status':'Success', 'error': None}], log_file)
+        write_error([{'recipient': receiver_email, 'time': now, 'status':'Success', 'error': None}], log_file)
         logger.info(f'Send to {recipient} Success')
     except Exception as e:
         logger.error(f'Send to {recipient} Fails.', e)
         # 记录发送失败的邮件
-        write_error([{'recipient': recipient, 'time': now, 'status':'Fail','error': str(e)}], log_file)
+        write_error([{'recipient': receiver_email, 'time': now, 'status':'Fail','error': str(e)}], log_file)
 
-def worker(task_queue, sender, subject, email_body, log_file):
+def worker(task_queue, sender, subject, email_body, log_file, subject_raw=None):
     while True and not task_queue.empty():
         logger.info('begin to work')
         item = task_queue.get() # wait for job
         logger.info(f'get work: {item}')
-        do_send(sender, item, subject, email_body, log_file )
+        do_send(sender, item, subject, email_body, log_file, subject_raw )
         task_queue.task_done()
         logger.info(f'task done')
 
@@ -99,6 +102,7 @@ def main():
     log_file = config.get_or_default('recipient','log_file', default_value='conf/log.csv')
     
     subject = config.get_or_default('email','subject', default_value='Test Email')
+    subject_raw = config.get_or_default('email','subject_raw', default_value='Test Email')
     
     smtp_list = config.get_list('smtp')
 
@@ -109,12 +113,24 @@ def main():
     # 读取CSV文件
     with open(csv_file, 'r') as file:
         reader = csv.DictReader(file)
-        recipients = [row['recipient'] for row in reader]
+        recipients = [(row['recipient'], row['name'])  for row in reader]
+    
+    # 检查log文件，如果已经发送成功，不再发送
+    
+    if not os.path.exists(log_file):
+        with open(log_file, 'w', newline='') as file:
+            fieldnames = ['recipient', 'time','status', 'error']
+            writer = csv.DictWriter(file, fieldnames=fieldnames)
+            writer.writeheader()
+    
     with open(log_file, 'r') as file:
         reader = csv.DictReader(file)
         sent_list = [row['recipient'] for row in reader if row['status'] == 'Success']
     
-    recipients = [recipient for recipient in recipients if recipient not in sent_list]
+    # 去除已经发送成功的邮件
+    recipients = [recipient for recipient in recipients if recipient[0] not in sent_list]
+    
+    
     with open(html_file, 'r', encoding='utf-8') as file:
         email_body = file.read()
         
@@ -125,7 +141,7 @@ def main():
     
     with concurrent.futures.ThreadPoolExecutor(thread_name_prefix="sender") as pool:
         for sender in senders:
-            pool.submit(worker, total_queue, sender, subject, email_body, log_file)
+            pool.submit(worker, total_queue, sender, subject, email_body, log_file, subject_raw)
 
     total_queue.join()
     for sender in senders:
@@ -136,17 +152,32 @@ def main():
     
 # 读取一个list，追加到csv文件    
 def write_error(error_list, err_file):
-    with open(err_file, 'a', newline='') as file:
-        fieldnames = ['recipient', 'time','status', 'error']
-        writer = csv.DictWriter(file, fieldnames=fieldnames)
-        writer.writerows(error_list)
+    # 如果文件不存在，创建文件并写入表头
+    if not os.path.exists(err_file):
+        with open(err_file, 'w', newline='') as file:
+            fieldnames = ['recipient', 'time','status', 'error']
+            writer = csv.DictWriter(file, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(error_list)
+    else:
+        with open(err_file, 'a', newline='') as file:
+            fieldnames = ['recipient', 'time','status', 'error']
+            writer = csv.DictWriter(file, fieldnames=fieldnames)
+            writer.writerows(error_list)
 
 # 读取一个list，根据条件修改csv文件
 # 遍历List, 如果元素的某个属性满足条件，修改csv文件中的某个属性
 def write_success(success_list, log_file):
-    with open(log_file, 'r') as file:
-        reader = csv.DictReader(file)
-        rows = [row for row in reader]
+    if not os.path.exists(log_file):
+        with open(log_file, 'w', newline='') as file:
+            fieldnames = ['recipient', 'time','status', 'error']
+            writer = csv.DictWriter(file, fieldnames=fieldnames)
+            writer.writeheader()
+            rows = []
+    else:
+        with open(log_file, 'r') as file:
+            reader = csv.DictReader(file)
+            rows = [row for row in reader]
         
     for row in rows:
         for success in success_list:
