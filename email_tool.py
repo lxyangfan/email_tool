@@ -14,8 +14,10 @@ import concurrent.futures
 import queue
 
 logger = get_logger()
-config_path = os.path.join(os.path.dirname(__file__), 'conf', 'task.yaml')
-config = YamlConfig(config_path)
+account_path = os.path.join(os.path.dirname(__file__), 'conf', 'account.csv')
+recipients_path = os.path.join(os.path.dirname(__file__), 'conf', 'recipients.csv')
+email_path = os.path.join(os.path.dirname(__file__), 'conf', 'email.csv')
+log_file_path = os.path.join(os.path.dirname(__file__), 'conf', 'log.csv')
 
 class EmailSender:
     
@@ -96,34 +98,89 @@ def worker(task_queue, sender, subject, email_body, log_file, subject_raw=None):
         logger.info(f'task done')
 
 
+def check_csv_exists(file_path, file_name, fieldnames):
+    if not os.path.exists(file_path):
+        logger.error(f'{file_name} 配置不存在，已创建初始化配置文件：{file_path}')
+        with open(file_path, 'w', newline='', encoding='utf-8') as file:
+            writer = csv.DictWriter(file, fieldnames=fieldnames)
+            writer.writeheader()
+        raise Exception(f'请补充{file_name}到文件：{file_path}')
+    
+def read_csv_dict(file_path):
+    if os.path.exists(file_path):
+        with open(file_path, 'r', encoding='utf-8')  as file:
+            reader = csv.DictReader(file)
+            return next(reader)
+    raise Exception(f'文件不存在 {file_path}')
+
+def read_csv_dict_list(file_path):
+    if os.path.exists(file_path):
+        with open(file_path, 'r', encoding='utf-8')  as file:
+            reader = csv.DictReader(file)
+            return [row for row in reader]
+    raise Exception(f'文件不存在 {file_path}')
+
+def check_email_config(email_config):
+    logger.info(f'邮件配置 {email_config}')
+    body_file = email_config.get('body_file') 
+    if body_file is None or not os.path.exists(body_file):
+        raise Exception(f'请检查邮件配置，body_file {body_file} 不存在')
+    subject = email_config.get('subject')
+    if check_str_blank(subject):
+        raise Exception(f'请检查邮件配置，subject 不存在或者为空')
+    subject_raw = email_config.get('subject_raw')
+    if check_str_blank(subject_raw):
+        raise Exception(f'请检查邮件配置，subject_raw 不存在或者为空')
+    return subject, subject_raw, body_file
+
+def check_str_blank(strs):
+    return strs is None or len(strs) == 0
+
+def check_smtp_config(smtp_config):
+    host = smtp_config.get('host')
+    port = smtp_config.get('port')
+    alias = smtp_config.get('alias')
+    user = smtp_config.get('user')
+    password = smtp_config.get('password')
+    if check_str_blank(host):
+        raise Exception(f'host 为空')
+    if check_str_blank(port):
+        raise Exception(f'port 为空')
+    if check_str_blank(alias):
+        raise Exception(f'alias 为空')
+    if check_str_blank(user):
+        raise Exception(f'user 为空')
+    if check_str_blank(password):
+        raise Exception(f'password 为空')
+    return True
+
 def main():
-    csv_file = config.get_or_default('recipient','address_book', default_value='conf/recepients.csv') 
-    html_file = config.get_or_default('email','body_file', default_value='conf/email_body.html')
-    log_file = config.get_or_default('recipient','log_file', default_value='conf/log.csv')
+
+    # 读取收件人配置
+    check_csv_exists(recipients_path, '收件人', ['recipient', 'name'])
+    receivers = read_csv_dict_list(recipients_path)
+    recipients = [(row.get('recipient'), row.get('name'))  for row in receivers]
+
+    # 读取email配置
+    check_csv_exists(email_path, '邮件信息', ['subject','subject_raw','body_file'])
+    email_config = read_csv_dict(email_path)
+    subject, subject_raw, html_file = check_email_config(email_config)
+
+    # 读取日志配置
+    check_csv_exists(log_file_path, '发送日志', ['recipient', 'time','status', 'error'])
     
-    subject = config.get_or_default('email','subject', default_value='Test Email')
-    subject_raw = config.get_or_default('email','subject_raw', default_value='Test Email')
-    
-    smtp_list = config.get_list('smtp')
+    # 读取发件人配置
+    check_csv_exists(account_path, '发件人', ['host', 'port', 'alias', 'user', 'password'])
+    smtp_list = read_csv_dict_list(account_path)
 
     senders = [EmailSender(smtp.get('host'), smtp.get('port'), 
                            smtp.get('user'), smtp.get('password'), 
-                           smtp.get('alias')) for smtp in smtp_list]
+                           smtp.get('alias')) for smtp in smtp_list if check_smtp_config(smtp)]
 
-    # 读取CSV文件
-    with open(csv_file, 'r') as file:
-        reader = csv.DictReader(file)
-        recipients = [(row['recipient'], row['name'])  for row in reader]
-    
+   
     # 检查log文件，如果已经发送成功，不再发送
     
-    if not os.path.exists(log_file):
-        with open(log_file, 'w', newline='') as file:
-            fieldnames = ['recipient', 'time','status', 'error']
-            writer = csv.DictWriter(file, fieldnames=fieldnames)
-            writer.writeheader()
-    
-    with open(log_file, 'r') as file:
+    with open(log_file_path, 'r') as file:
         reader = csv.DictReader(file)
         sent_list = [row['recipient'] for row in reader if row['status'] == 'Success']
     
@@ -141,7 +198,7 @@ def main():
     
     with concurrent.futures.ThreadPoolExecutor(thread_name_prefix="sender") as pool:
         for sender in senders:
-            pool.submit(worker, total_queue, sender, subject, email_body, log_file, subject_raw)
+            pool.submit(worker, total_queue, sender, subject, email_body, log_file_path, subject_raw)
 
     total_queue.join()
     for sender in senders:
@@ -196,6 +253,9 @@ def write_success(success_list, log_file):
     
 
 if __name__ == '__main__':
-    main()
+    try:
+        main()
+    except Exception as e:
+        logger.error(f'遇到了一点问题，程序异常退出', e)
     # 接收控制台输入，防止程序退出
     input('Press Enter to exit...')
