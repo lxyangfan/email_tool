@@ -57,7 +57,7 @@ class EmailSender:
         msg = EmailMessage()
         msg.add_header('From', f'{sender_alias} <{sender_email}>')
         msg['To'] = to
-        if receiver_name is not None and '{name}' in subject:
+        if not check_str_blank(receiver_name) and '{name}' in subject:
             msg['Subject'] = subject.replace('{name}', receiver_name)
         else:
             msg['Subject'] = subject_raw
