@@ -12,12 +12,16 @@ import time
 import os
 import concurrent.futures
 import queue
+from email_log import *
+from common import *
+import sys
 
 logger = get_logger()
 account_path = os.path.join(os.path.dirname(__file__), 'conf', 'account.csv')
 recipients_path = os.path.join(os.path.dirname(__file__), 'conf', 'recipients.csv')
 email_path = os.path.join(os.path.dirname(__file__), 'conf', 'email.csv')
 log_file_path = os.path.join(os.path.dirname(__file__), 'conf', 'log.csv')
+
 
 class EmailSender:
     
@@ -63,7 +67,7 @@ class EmailSender:
             msg['Subject'] = subject_raw
 
         # 添加邮件正文
-        msg.set_content(body, subtype='html', charset='utf-8')
+        msg.set_content(body, subtype='html', charset=default_encoding)
 
 
         try:
@@ -101,21 +105,21 @@ def worker(task_queue, sender, subject, email_body, log_file, subject_raw=None):
 def check_csv_exists(file_path, file_name, fieldnames):
     if not os.path.exists(file_path):
         logger.error(f'{file_name} 配置不存在，已创建初始化配置文件：{file_path}')
-        with open(file_path, 'w', newline='', encoding='utf-8') as file:
+        with open(file_path, 'w', newline='', encoding=csv_encoding) as file:
             writer = csv.DictWriter(file, fieldnames=fieldnames)
             writer.writeheader()
         raise Exception(f'请补充{file_name}到文件：{file_path}')
     
 def read_csv_dict(file_path):
     if os.path.exists(file_path):
-        with open(file_path, 'r', encoding='utf-8')  as file:
+        with open(file_path, 'r', encoding=csv_encoding)  as file:
             reader = csv.DictReader(file)
             return next(reader)
     raise Exception(f'文件不存在 {file_path}')
 
 def read_csv_dict_list(file_path):
     if os.path.exists(file_path):
-        with open(file_path, 'r', encoding='utf-8')  as file:
+        with open(file_path, 'r', encoding=csv_encoding)  as file:
             reader = csv.DictReader(file)
             return [row for row in reader]
     raise Exception(f'文件不存在 {file_path}')
@@ -180,7 +184,7 @@ def main():
    
     # 检查log文件，如果已经发送成功，不再发送
     
-    with open(log_file_path, 'r') as file:
+    with open(log_file_path, 'r', encoding=csv_encoding) as file:
         reader = csv.DictReader(file)
         sent_list = [row['recipient'] for row in reader if row['status'] == 'Success']
     
@@ -188,7 +192,7 @@ def main():
     recipients = [recipient for recipient in recipients if recipient[0] not in sent_list]
     
     
-    with open(html_file, 'r', encoding='utf-8') as file:
+    with open(html_file, 'r', encoding=default_encoding) as file:
         email_body = file.read()
         
     # 逐个发送邮件
@@ -205,52 +209,7 @@ def main():
         sender.destroy_smtp()
     logger.info('Email sending completed')
 
-    
-    
-# 读取一个list，追加到csv文件    
-def write_error(error_list, err_file):
-    # 如果文件不存在，创建文件并写入表头
-    if not os.path.exists(err_file):
-        with open(err_file, 'w', newline='') as file:
-            fieldnames = ['recipient', 'time','status', 'error']
-            writer = csv.DictWriter(file, fieldnames=fieldnames)
-            writer.writeheader()
-            writer.writerows(error_list)
-    else:
-        with open(err_file, 'a', newline='') as file:
-            fieldnames = ['recipient', 'time','status', 'error']
-            writer = csv.DictWriter(file, fieldnames=fieldnames)
-            writer.writerows(error_list)
 
-# 读取一个list，根据条件修改csv文件
-# 遍历List, 如果元素的某个属性满足条件，修改csv文件中的某个属性
-def write_success(success_list, log_file):
-    if not os.path.exists(log_file):
-        with open(log_file, 'w', newline='') as file:
-            fieldnames = ['recipient', 'time','status', 'error']
-            writer = csv.DictWriter(file, fieldnames=fieldnames)
-            writer.writeheader()
-            rows = []
-    else:
-        with open(log_file, 'r') as file:
-            reader = csv.DictReader(file)
-            rows = [row for row in reader]
-        
-    for row in rows:
-        for success in success_list:
-            if row['recipient'] == success['recipient']:
-                row['time'] = success['time']
-                row['status'] = 'Success'
-                
-    with open(log_file, 'w', newline='') as file:
-        fieldnames = ['recipient', 'time', 'status']
-        writer = csv.DictWriter(file, fieldnames=fieldnames)
-        writer.writeheader()
-        writer.writerows(rows)
-        
-    logger.info(f'Log file updated: {log_file}')
-
-    
 
 if __name__ == '__main__':
     try:
